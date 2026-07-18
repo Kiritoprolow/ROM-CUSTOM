@@ -28,6 +28,16 @@ export GEMINI_API_KEY='your_api_key'
 
 ## Sử dụng
 
+### Giao diện Web (khuyến nghị)
+
+```bash
+streamlit run app.py
+```
+
+Mở trình duyệt tại địa chỉ hiển thị (mặc định http://localhost:8501), dán link Shopee và bấm **BẮT ĐẦU TẠO VIDEO 🎬**. Kịch bản, trình phát video và nút tải video sẽ hiện ngay trên trang.
+
+### Dòng lệnh
+
 ```bash
 # Cách 1: truyền link trực tiếp
 python main.py "https://shopee.vn/ten-san-pham-i.12345678.87654321"
