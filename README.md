@@ -7,7 +7,7 @@ Tool tự động hóa bằng Python: nhập link sản phẩm Shopee → cào d
 | Module | File | Công nghệ | Chức năng |
 |---|---|---|---|
 | 1. Shopee Scraper | `shopee_scraper.py` | Playwright | Cào tên, giá, mô tả và tải 5-7 ảnh sản phẩm về thư mục `/images` |
-| 2. AI Script Generator | `script_generator.py` | Google Gemini (`gemini-1.5-flash`) | Viết kịch bản TikTok < 60s dạng JSON (`hook`, `problem`, `features`, `cta`) |
+| 2. AI Script Generator | `script_generator.py` | Google Gemini (`gemini-flash-latest`) | Viết kịch bản TikTok < 60s dạng JSON (`hook`, `problem`, `features`, `cta`) |
 | 3. Text-To-Speech | `tts_generator.py` | edge-tts (Microsoft, miễn phí) | Chuyển lời thoại thành `audio.mp3` giọng tiếng Việt |
 | 4. Video Compositor | `video_compositor.py` | MoviePy | Ghép ảnh thành video slide có hiệu ứng zoom, khớp độ dài audio, xuất `final_video.mp4` (9:16) |
 

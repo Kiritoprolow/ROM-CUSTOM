@@ -1,7 +1,7 @@
 """
 MODULE 2: AI SCRIPT GENERATOR
 -----------------------------
-Sử dụng Google Gemini API (model gemini-1.5-flash) để viết kịch bản video TikTok.
+Sử dụng Google Gemini API (model gemini-flash-latest) để viết kịch bản video TikTok.
 
 Chức năng:
 - Nhận dữ liệu sản phẩm từ Module 1 (tên, giá, mô tả).
@@ -17,7 +17,7 @@ import re
 import google.generativeai as genai
 
 # Tên model Gemini sử dụng (miễn phí, tốc độ nhanh)
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-flash-latest"
 
 # System Prompt: ép Gemini đóng vai chuyên gia content TikTok và CHỈ trả về JSON
 SYSTEM_PROMPT = """Bạn là chuyên gia viết kịch bản video TikTok Affiliate tại Việt Nam.
