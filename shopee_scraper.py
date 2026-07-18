@@ -14,6 +14,7 @@ import os
 import re
 import json
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -149,9 +150,15 @@ def download_images(image_urls: list, output_dir: str = IMAGES_DIR) -> list:
 
     headers = {"User-Agent": USER_AGENT, "Referer": "https://shopee.vn/"}
 
+    # Dùng chung proxy với Playwright nếu có cấu hình PROXY_URL
+    proxies = None
+    proxy_url = os.environ.get("PROXY_URL", "").strip()
+    if proxy_url:
+        proxies = {"http": proxy_url, "https": proxy_url}
+
     for index, url in enumerate(image_urls[:MAX_IMAGES], start=1):
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=30, proxies=proxies)
             response.raise_for_status()
 
             file_path = os.path.join(output_dir, f"product_{index}.jpg")
@@ -166,7 +173,7 @@ def download_images(image_urls: list, output_dir: str = IMAGES_DIR) -> list:
     return saved_paths
 
 
-def scrape_shopee_product(url: str) -> ProductData:
+def scrape_shopee_product(url: str, images_dir: str = IMAGES_DIR) -> ProductData:
     """
     Hàm chính của Module 1: nhận link Shopee, trả về ProductData đầy đủ
     (tên, giá, mô tả, link ảnh và ảnh đã tải về máy).
@@ -175,8 +182,21 @@ def scrape_shopee_product(url: str) -> ProductData:
     product = ProductData()
     api_payload = {}
 
+    # Hỗ trợ proxy dân dụng qua biến môi trường PROXY_URL để né Shopee chặn IP
+    # Định dạng: http://user:pass@host:port hoặc http://host:port
+    proxy_config = None
+    proxy_url = os.environ.get("PROXY_URL", "").strip()
+    if proxy_url:
+        parsed = urlparse(proxy_url)
+        proxy_config = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
+        if parsed.username:
+            proxy_config["username"] = parsed.username
+        if parsed.password:
+            proxy_config["password"] = parsed.password
+        print("[Scraper] Đang dùng proxy từ biến môi trường PROXY_URL.")
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True, proxy=proxy_config)
         context = browser.new_context(
             user_agent=USER_AGENT,
             viewport={"width": 1366, "height": 768},
@@ -221,8 +241,8 @@ def scrape_shopee_product(url: str) -> ProductData:
     print(f"[Scraper] Giá: {product.price}")
     print(f"[Scraper] Số ảnh tìm thấy: {len(product.image_urls)}")
 
-    # Tải ảnh về thư mục /images
-    product.image_paths = download_images(product.image_urls)
+    # Tải ảnh về thư mục images_dir (mặc định /images)
+    product.image_paths = download_images(product.image_urls, images_dir)
 
     return product
 

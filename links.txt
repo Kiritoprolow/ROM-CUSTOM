@@ -1,0 +1,3 @@
+# Dán link sản phẩm Shopee vào đây, mỗi dòng 1 link.
+# Dòng bắt đầu bằng dấu # sẽ được bỏ qua.
+https://vn.shp.ee/bsixmuMT

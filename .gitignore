@@ -3,6 +3,7 @@ images/
 audio.mp3
 final_video.mp4
 script.json
+output/
 
 # Python
 __pycache__/

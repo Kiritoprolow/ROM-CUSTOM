@@ -58,6 +58,18 @@ Kết quả đầu ra:
 - **Thời gian mỗi ảnh**: sửa `MIN_IMAGE_DURATION` / `MAX_IMAGE_DURATION` trong `video_compositor.py`.
 - **Số ảnh tải về**: sửa `MAX_IMAGES` trong `shopee_scraper.py`.
 
+## Chạy tự động bằng GitHub Actions + Telegram
+
+Ngoài Web/CLI, repo có sẵn bot tự động (`run_bot.py` + `.github/workflows/auto_render.yml`):
+
+1. Vào **Settings → Secrets and variables → Actions** của repo, thêm các Secret:
+   - `GEMINI_API_KEY` — API key Gemini (bắt buộc).
+   - `TELEGRAM_BOT_TOKEN` — token bot Telegram, tạo qua [@BotFather](https://t.me/BotFather) (bắt buộc).
+   - `TELEGRAM_CHAT_ID` — chat ID nhận video, lấy qua [@userinfobot](https://t.me/userinfobot) (bắt buộc). Nhớ bấm **Start** với bot của bạn trước.
+   - `PROXY_URL` — proxy dân dụng dạng `http://user:pass@host:port` để né Shopee chặn IP datacenter của GitHub (khuyến nghị mạnh).
+2. Thêm link sản phẩm Shopee vào `links.txt` (mỗi dòng 1 link) rồi push lên GitHub.
+3. Workflow tự chạy: cào dữ liệu → Gemini viết kịch bản → tạo giọng đọc → render video → gửi `final_video.mp4` về Telegram. Video cũng được lưu làm artifact trong tab Actions để tải dự phòng.
+
 ## Lưu ý về Shopee
 
 Shopee có cơ chế chống bot khá mạnh. Tool dùng Playwright (trình duyệt thật) + User-Agent chuẩn để giảm khả năng bị chặn, nhưng nếu bị yêu cầu đăng nhập/captcha, hãy thử lại sau hoặc dùng link sản phẩm khác.
