@@ -1,1 +1,53 @@
-# ROM-CUSTOM
+# Shopee To TikTok Video Generator
+
+Tool tự động hóa bằng Python: nhập link sản phẩm Shopee → cào dữ liệu → AI (Gemini) viết kịch bản → chuyển thành giọng đọc AI → dựng video TikTok dọc 9:16 hoàn chỉnh để làm Affiliate.
+
+## Kiến trúc 4 Module
+
+| Module | File | Công nghệ | Chức năng |
+|---|---|---|---|
+| 1. Shopee Scraper | `shopee_scraper.py` | Playwright | Cào tên, giá, mô tả và tải 5-7 ảnh sản phẩm về thư mục `/images` |
+| 2. AI Script Generator | `script_generator.py` | Google Gemini (`gemini-1.5-flash`) | Viết kịch bản TikTok < 60s dạng JSON (`hook`, `problem`, `features`, `cta`) |
+| 3. Text-To-Speech | `tts_generator.py` | edge-tts (Microsoft, miễn phí) | Chuyển lời thoại thành `audio.mp3` giọng tiếng Việt |
+| 4. Video Compositor | `video_compositor.py` | MoviePy | Ghép ảnh thành video slide có hiệu ứng zoom, khớp độ dài audio, xuất `final_video.mp4` (9:16) |
+
+## Cài đặt
+
+```bash
+# 1. Cài các thư viện Python
+pip install -r requirements.txt
+
+# 2. Cài trình duyệt Chromium cho Playwright
+playwright install chromium
+
+# 3. Thiết lập API key Gemini (miễn phí tại https://aistudio.google.com/app/apikey)
+export GEMINI_API_KEY='your_api_key'
+```
+
+> Lưu ý: MoviePy cần `ffmpeg`. Nếu máy chưa có: `sudo apt install ffmpeg` (Linux) hoặc tải tại https://ffmpeg.org.
+
+## Sử dụng
+
+```bash
+# Cách 1: truyền link trực tiếp
+python main.py "https://shopee.vn/ten-san-pham-i.12345678.87654321"
+
+# Cách 2: chạy rồi nhập link khi được hỏi
+python main.py
+```
+
+Kết quả đầu ra:
+- `images/` — ảnh sản phẩm đã tải về
+- `script.json` — kịch bản (lời thoại + mô tả phân cảnh)
+- `audio.mp3` — giọng đọc AI tiếng Việt
+- `final_video.mp4` — video TikTok thành phẩm (1080x1920)
+
+## Tùy chỉnh
+
+- **Đổi giọng đọc**: sửa `DEFAULT_VOICE` trong `tts_generator.py` (`vi-VN-HoaiMyNeural` giọng nữ, `vi-VN-NamMinhNeural` giọng nam).
+- **Thời gian mỗi ảnh**: sửa `MIN_IMAGE_DURATION` / `MAX_IMAGE_DURATION` trong `video_compositor.py`.
+- **Số ảnh tải về**: sửa `MAX_IMAGES` trong `shopee_scraper.py`.
+
+## Lưu ý về Shopee
+
+Shopee có cơ chế chống bot khá mạnh. Tool dùng Playwright (trình duyệt thật) + User-Agent chuẩn để giảm khả năng bị chặn, nhưng nếu bị yêu cầu đăng nhập/captcha, hãy thử lại sau hoặc dùng link sản phẩm khác.

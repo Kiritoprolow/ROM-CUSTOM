@@ -1,0 +1,11 @@
+# File sinh ra khi chạy tool
+images/
+audio.mp3
+final_video.mp4
+script.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
