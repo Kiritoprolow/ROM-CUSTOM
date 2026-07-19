@@ -8,6 +8,11 @@ on:
       - "links.txt"
   # Cho phép chạy thủ công từ tab Actions khi cần
   workflow_dispatch:
+  # Frontend web tĩnh kích hoạt qua repository_dispatch (event_type = create_video),
+  # truyền client_payload: { links: [...], job_id: "..." }
+  repository_dispatch:
+    types:
+      - create_video
 
 jobs:
   render:
@@ -37,13 +42,19 @@ jobs:
       - name: Install Playwright browsers
         run: playwright install --with-deps chromium
 
-      # Bước 6: Chạy bot với đầy đủ Secrets truyền vào biến môi trường
+      # Bước 6: Chạy bot với đầy đủ Secrets truyền vào biến môi trường.
+      # Khi kích hoạt từ web (repository_dispatch), truyền links + job_id từ client_payload;
+      # các trigger khác (push/manual) thì run_bot.py tự đọc links.txt.
       - name: Run bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+          CLOUDINARY_FOLDER: shopee_tiktok
+          DISPATCH_LINKS: ${{ toJSON(github.event.client_payload.links) }}
+          DISPATCH_JOB_ID: ${{ github.event.client_payload.job_id }}
         run: python run_bot.py
 
       # Bước 7: Lưu video thành phẩm làm artifact dự phòng (nếu Telegram gửi lỗi vẫn tải được)

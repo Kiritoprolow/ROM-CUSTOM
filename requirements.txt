@@ -6,3 +6,4 @@ moviepy==1.0.3
 Pillow==9.5.0
 numpy<2
 streamlit==1.36.0
+cloudinary==1.40.0

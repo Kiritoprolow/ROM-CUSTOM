@@ -32,7 +32,22 @@ OUTPUT_DIR = "output"
 
 
 def read_links(file_path: str = LINKS_FILE) -> list:
-    """Đọc danh sách link Shopee từ file, bỏ qua dòng trống và dòng comment (#)."""
+    """
+    Lấy danh sách link Shopee cần xử lý.
+
+    Ưu tiên biến môi trường DISPATCH_LINKS (JSON array) khi workflow được kích
+    hoạt từ web qua repository_dispatch; nếu không có thì đọc từ file links.txt.
+    """
+    dispatch_links = os.environ.get("DISPATCH_LINKS", "").strip()
+    if dispatch_links and dispatch_links not in ("null", "[]"):
+        try:
+            links = [str(u).strip() for u in json.loads(dispatch_links) if str(u).strip()]
+            if links:
+                print(f"[Bot] Nhận {len(links)} link từ repository_dispatch (web).")
+                return links
+        except json.JSONDecodeError:
+            print("[Bot] DISPATCH_LINKS không phải JSON hợp lệ, chuyển sang đọc links.txt.")
+
     if not os.path.exists(file_path):
         print(f"[Bot] Không tìm thấy file {file_path}!")
         return []
@@ -44,6 +59,34 @@ def read_links(file_path: str = LINKS_FILE) -> list:
             if line and not line.startswith("#"):
                 links.append(line)
     return links
+
+
+def upload_to_cloudinary(video_path: str, job_id: str) -> str:
+    """
+    Upload video lên Cloudinary với public_id = <folder>/<job_id> để frontend
+    polling đúng URL. Cần secret CLOUDINARY_URL. Trả về URL video, hoặc "" nếu bỏ qua/lỗi.
+    """
+    if not os.environ.get("CLOUDINARY_URL", "").strip() or not job_id:
+        return ""
+
+    try:
+        import cloudinary  # noqa: PLC0415 - chỉ cần khi chạy trên workflow web
+        import cloudinary.uploader  # noqa: PLC0415
+
+        folder = os.environ.get("CLOUDINARY_FOLDER", "shopee_tiktok")
+        cloudinary.config(secure=True)  # đọc cấu hình từ CLOUDINARY_URL
+        result = cloudinary.uploader.upload_large(
+            video_path,
+            resource_type="video",
+            public_id=f"{folder}/{job_id}",
+            overwrite=True,
+        )
+        url = result.get("secure_url", "")
+        print(f"[Cloudinary] Đã upload video: {url}")
+        return url
+    except Exception as error:  # noqa: BLE001
+        print(f"[Cloudinary] Lỗi khi upload: {error}")
+        return ""
 
 
 def send_video_to_telegram(video_path: str, caption: str) -> bool:
@@ -84,9 +127,10 @@ def send_video_to_telegram(video_path: str, caption: str) -> bool:
         return False
 
 
-def process_link(index: int, url: str) -> bool:
+def process_link(index: int, url: str, job_id: str = "") -> bool:
     """
-    Xử lý trọn vẹn 1 link sản phẩm: cào -> kịch bản -> giọng đọc -> video -> Telegram.
+    Xử lý trọn vẹn 1 link sản phẩm: cào -> kịch bản -> giọng đọc -> video
+    -> upload Cloudinary (nếu có) -> gửi Telegram.
     Trả về True nếu toàn bộ quy trình thành công.
     """
     print(f"\n{'=' * 60}\n[Bot] Xử lý link {index}: {url}\n{'=' * 60}")
@@ -136,9 +180,18 @@ def process_link(index: int, url: str) -> bool:
         print(f"[Bot] Lỗi khi render video: {error}")
         return False
 
-    # ---------- BƯỚC 5: GỬI VỀ TELEGRAM ----------
+    # ---------- BƯỚC 5: UPLOAD CLOUDINARY (cho frontend web polling) ----------
+    # Link đầu dùng đúng job_id từ web; các link sau (Premium bulk) thêm hậu tố.
+    if job_id:
+        public_job_id = job_id if index == 1 else f"{job_id}_{index}"
+        upload_to_cloudinary(video_file, public_job_id)
+
+    # ---------- BƯỚC 6: GỬI VỀ TELEGRAM ----------
     caption = f"🎬 Video review: {product.name}\n💰 Giá: {product.price}\n🔗 {url}"
-    return send_video_to_telegram(video_file, caption)
+    telegram_ok = send_video_to_telegram(video_file, caption)
+
+    # Coi là thành công nếu video đã render (đã upload Cloudinary hoặc gửi Telegram)
+    return telegram_ok or bool(job_id)
 
 
 def main():
@@ -150,9 +203,11 @@ def main():
 
     print(f"[Bot] Tìm thấy {len(links)} link cần xử lý.")
 
+    job_id = os.environ.get("DISPATCH_JOB_ID", "").strip()
+
     success_count = 0
     for index, url in enumerate(links, start=1):
-        if process_link(index, url):
+        if process_link(index, url, job_id=job_id):
             success_count += 1
 
     print(f"\n[Bot] HOÀN TẤT: {success_count}/{len(links)} video được tạo và gửi thành công.")

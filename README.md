@@ -70,6 +70,20 @@ Ngoài Web/CLI, repo có sẵn bot tự động (`run_bot.py` + `.github/workflo
 2. Thêm link sản phẩm Shopee vào `links.txt` (mỗi dòng 1 link) rồi push lên GitHub.
 3. Workflow tự chạy: cào dữ liệu → Gemini viết kịch bản → tạo giọng đọc → render video → gửi `final_video.mp4` về Telegram. Video cũng được lưu làm artifact trong tab Actions để tải dự phòng.
 
+## Giao diện Web tĩnh (Frontend) — `web/`
+
+Web tĩnh (HTML + Tailwind + JS thuần, dark/cyberpunk/glassmorphism) để người dùng dán link và nhận video mà không cần terminal. Kiến trúc decoupled: frontend chỉ kích hoạt GitHub Actions và polling video trên Cloudinary.
+
+**Luồng:** người dùng dán link → `repository_dispatch` (event `create_video`) → GitHub Actions cào/render → upload Cloudinary `shopee_tiktok/<job_id>.mp4` → frontend polling thấy file → hiện nút tải.
+
+**Deploy:** đẩy thư mục `web/` lên GitHub Pages hoặc Vercel (tĩnh, miễn phí). Chỉnh `web/config.js` trước khi deploy.
+
+**⚠️ Bảo mật token dispatch:** web tĩnh không có server nên token GitHub buộc phải nằm ở client nếu gọi thẳng API. Khuyến nghị mạnh dùng **serverless proxy** (mẫu tại `web/serverless/dispatch.example.js`, deploy trên Vercel/Cloudflare) để giữ token phía server; đặt `DISPATCH_MODE: "proxy"` trong `config.js`. Chế độ `"direct"` (điền token vào client) chỉ dùng khi chấp nhận rủi ro và token đã giới hạn quyền tối đa (Contents:Read + Actions:Write).
+
+**Premium key:** không lưu key plaintext — chỉ lưu SHA-256 hash trong `config.js` (`PREMIUM_KEY_HASHES`). Tạo hash: `echo -n "KEY-CUA-BAN" | shasum -a 256`. (Lưu ý: bảo vệ client-side chỉ mang tính ngăn xem lướt; ai quyết tâm vẫn có thể tự set localStorage — muốn chặt chẽ cần xác thực phía server.)
+
+Cần thêm secret `CLOUDINARY_URL` (dạng `cloudinary://<api_key>:<api_secret>@<cloud_name>`) vào GitHub Actions để bước upload hoạt động, và điền `CLOUDINARY_CLOUD_NAME` trong `config.js` cho khớp.
+
 ## Lưu ý về Shopee
 
 Shopee có cơ chế chống bot khá mạnh. Tool dùng Playwright (trình duyệt thật) + User-Agent chuẩn để giảm khả năng bị chặn, nhưng nếu bị yêu cầu đăng nhập/captcha, hãy thử lại sau hoặc dùng link sản phẩm khác.
