@@ -1,0 +1,67 @@
+# Workflow tự động: mỗi khi push thay đổi vào links.txt,
+# GitHub Actions sẽ chạy run_bot.py để tạo video và gửi về Telegram.
+name: Auto Render TikTok Video
+
+on:
+  push:
+    paths:
+      - "links.txt"
+  # Cho phép chạy thủ công từ tab Actions khi cần
+  workflow_dispatch:
+  # Frontend web tĩnh kích hoạt qua repository_dispatch (event_type = create_video),
+  # truyền client_payload: { links: [...], job_id: "..." }
+  repository_dispatch:
+    types:
+      - create_video
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # Bước 1: Lấy mã nguồn về máy ảo
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # Bước 2: Cài Python 3.10
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # Bước 3: Cài ffmpeg hệ thống (bắt buộc cho MoviePy render video)
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # Bước 4: Cài các thư viện Python
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # Bước 5: Cài browser Chromium cho Playwright (kèm system dependencies)
+      - name: Install Playwright browsers
+        run: playwright install --with-deps chromium
+
+      # Bước 6: Chạy bot với đầy đủ Secrets truyền vào biến môi trường.
+      # Khi kích hoạt từ web (repository_dispatch), truyền links + job_id từ client_payload;
+      # các trigger khác (push/manual) thì run_bot.py tự đọc links.txt.
+      - name: Run bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+          CLOUDINARY_FOLDER: shopee_tiktok
+          DISPATCH_LINKS: ${{ toJSON(github.event.client_payload.links) }}
+          DISPATCH_JOB_ID: ${{ github.event.client_payload.job_id }}
+        run: python run_bot.py
+
+      # Bước 7: Lưu video thành phẩm làm artifact dự phòng (nếu Telegram gửi lỗi vẫn tải được)
+      - name: Upload videos as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-videos
+          path: output/**/final_video.mp4
+          if-no-files-found: ignore
