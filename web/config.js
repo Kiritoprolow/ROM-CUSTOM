@@ -34,7 +34,7 @@ window.APP_CONFIG = {
   DISPATCH_EVENT_TYPE: "create_video",
 
   // (Chỉ dùng khi DISPATCH_MODE = "proxy") endpoint serverless của bạn
-  PROXY_ENDPOINT: "https://your-app.vercel.app/api/dispatch",
+  PROXY_ENDPOINT: "https://shopee-tiktok-proxy.dorakazuto.workers.dev",
 
   // (Chỉ dùng khi DISPATCH_MODE = "direct") — LỘ với người dùng, cân nhắc kỹ!
   GITHUB_TOKEN: "",
