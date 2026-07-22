@@ -9,7 +9,9 @@ const sharp = require("sharp");
 
 const PORT = parseInt(process.env.PORT || "7860", 10);
 const API_KEY = process.env.API_KEY || "";
-const YOLO_API_URL = process.env.YOLO_API_URL || "";
+const YOLO_API_URL =
+  process.env.YOLO_API_URL ||
+  "https://kakaytbrr-vuon-sau-rieng-face-detect.hf.space/api/predict";
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.CHAT_ID || "";
 
@@ -130,17 +132,14 @@ async function runAiPipeline(frame) {
       .jpeg()
       .toBuffer();
 
-    const detections = await callYolo(enhanced);
-    const persons = detections.filter(
-      (d) => String(d.class).toLowerCase() === "person"
-    );
-    if (persons.length === 0) return;
+    const result = await callYolo(enhanced);
+    if (result.personCount <= 0 || result.boxes.length === 0) return;
 
     const now = Date.now();
     if (now - lastAlertAt < ALERT_COOLDOWN_MS) return;
     lastAlertAt = now;
 
-    const annotated = await drawBoundingBoxes(enhanced, persons);
+    const annotated = await drawBoundingBoxes(enhanced, result.boxes);
     await sendTelegramAlert(annotated);
   } finally {
     aiBusy = false;
@@ -158,44 +157,27 @@ async function callYolo(imageBuffer) {
     timeout: 15000,
     maxBodyLength: Infinity,
   });
-  const data = res.data;
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data.detections)) return data.detections;
-  if (Array.isArray(data.predictions)) return data.predictions;
-  return [];
+  // Gradio response: { data: [ { person_count, boxes: [{x1,y1,x2,y2,confidence}] } ] }
+  const payload = res.data && Array.isArray(res.data.data) ? res.data.data[0] : null;
+  if (!payload) return { personCount: 0, boxes: [] };
+  const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
+  const personCount = Number(payload.person_count) || boxes.length;
+  return { personCount, boxes };
 }
 
-// Normalize a box to pixel {x, y, w, h}.
-// Supports [ymin, xmin, ymax, xmax] and [x, y, width, height],
-// with either pixel or normalized (0..1) coordinates.
-function normalizeBox(box, imgW, imgH) {
-  let [a, b, c, d] = box.map(Number);
-  const isNormalized = Math.max(a, b, c, d) <= 1.5;
-  if (isNormalized) {
-    a *= imgH;
-    b *= imgW;
-    c *= imgH;
-    d *= imgW;
-  }
-  // Heuristic: [ymin, xmin, ymax, xmax] when c > a and d > b look like maxes
-  if (c > a && d > b && c <= imgH * 1.05 && d <= imgW * 1.05) {
-    const ymin = a, xmin = b, ymax = c, xmax = d;
-    return { x: xmin, y: ymin, w: xmax - xmin, h: ymax - ymin };
-  }
-  // Otherwise treat as [x, y, width, height]
-  return { x: a, y: b, w: c, h: d };
-}
-
-async function drawBoundingBoxes(imageBuffer, persons) {
+async function drawBoundingBoxes(imageBuffer, boxes) {
   const meta = await sharp(imageBuffer).metadata();
   const imgW = meta.width || 640;
   const imgH = meta.height || 480;
 
-  const rects = persons
-    .map((p) => {
-      const { x, y, w, h } = normalizeBox(p.box || p.bbox || [0, 0, 0, 0], imgW, imgH);
+  const rects = boxes
+    .map((b) => {
+      const x = Number(b.x1) || 0;
+      const y = Number(b.y1) || 0;
+      const w = (Number(b.x2) || 0) - x;
+      const h = (Number(b.y2) || 0) - y;
       if (w <= 0 || h <= 0) return "";
-      const score = Math.round((Number(p.score) || 0) * 100);
+      const score = Math.round((Number(b.confidence) || 0) * 100);
       const labelY = y > 22 ? y - 8 : y + h + 18;
       return `
     <rect x="${x}" y="${y}" width="${w}" height="${h}"
