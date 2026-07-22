@@ -1,0 +1,19 @@
+{
+  "name": "esp32-cam-server",
+  "version": "1.0.0",
+  "description": "ESP32-CAM surveillance server: live stream, motion detection, YOLO person detection with bounding boxes, Telegram alerts",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "express": "^4.21.2",
+    "form-data": "^4.0.1",
+    "sharp": "^0.33.5",
+    "ws": "^8.18.0"
+  }
+}
