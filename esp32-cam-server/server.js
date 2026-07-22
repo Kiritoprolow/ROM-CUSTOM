@@ -24,6 +24,7 @@ let latestFrame = null; // latest JPEG buffer for the live stream
 let prevFrame = null; // previous frame for motion comparison
 let lastAlertAt = 0; // timestamp of last Telegram alert
 let aiBusy = false; // prevent overlapping AI pipelines
+const streamClients = new Set(); // active MJPEG /stream responses
 
 const app = express();
 
@@ -44,14 +45,8 @@ app.get("/", (req, res) => {
 </head>
 <body>
 <h1>📷 ESP32-CAM: Giám Sát Trực Tiếp</h1>
-<div class="status">Stream ~10 FPS · Lọc chuyển động · Cảnh báo YOLO qua Telegram</div>
-<img id="stream" src="/image.jpg" alt="Đang chờ tín hiệu từ ESP32-CAM...">
-<script>
-  const img = document.getElementById("stream");
-  setInterval(() => {
-    img.src = "/image.jpg?t=" + Date.now();
-  }, 100);
-</script>
+<div class="status">MJPEG stream trực tiếp · Lọc chuyển động · Cảnh báo YOLO qua Telegram</div>
+<img src="/stream" alt="Đang chờ tín hiệu từ ESP32-CAM...">
 </body>
 </html>`);
 });
@@ -64,6 +59,37 @@ app.get("/image.jpg", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.type("jpeg").send(latestFrame);
 });
+
+// ---- MJPEG live stream (multipart/x-mixed-replace) ----
+app.get("/stream", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+    Pragma: "no-cache",
+  });
+  streamClients.add(res);
+  if (latestFrame) pushMjpegFrame(res, latestFrame);
+  req.on("close", () => streamClients.delete(res));
+});
+
+function pushMjpegFrame(res, frame) {
+  res.write(
+    `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`
+  );
+  res.write(frame);
+  res.write("\r\n");
+}
+
+function broadcastFrame(frame) {
+  for (const res of streamClients) {
+    if (res.writableEnded || res.destroyed) {
+      streamClients.delete(res);
+      continue;
+    }
+    pushMjpegFrame(res, frame);
+  }
+}
 
 const server = http.createServer(app);
 
@@ -93,6 +119,7 @@ wss.on("connection", (ws) => {
     if (!isBinary && !Buffer.isBuffer(data)) return;
     const frame = Buffer.isBuffer(data) ? data : Buffer.from(data);
     latestFrame = frame;
+    broadcastFrame(frame);
     if (detectMotion(frame)) {
       runAiPipeline(frame).catch((err) =>
         console.error("[AI] Pipeline error:", err.message)
