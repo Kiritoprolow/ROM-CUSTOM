@@ -1,6 +1,7 @@
 "use strict";
 
 const http = require("http");
+const https = require("https");
 const express = require("express");
 const { WebSocketServer } = require("ws");
 const axios = require("axios");
@@ -17,6 +18,10 @@ const CHAT_ID = (process.env.CHAT_ID || "").trim();
 const MOTION_THRESHOLD = 0.15; // 15% pixel variance
 const MOTION_SAMPLE_STEP = 50; // sparse byte sampling step
 const ALERT_COOLDOWN_MS = 60 * 1000; // 60s between Telegram alerts
+
+// Reuse connections and force IPv4 (containers often lack IPv6 egress,
+// which makes Node hang on api.telegram.org while curl works)
+const telegramAgent = new https.Agent({ keepAlive: true, family: 4 });
 
 // ---- RAM-only state ----
 let latestFrame = null; // latest JPEG buffer for the live stream
@@ -267,6 +272,7 @@ async function sendTelegramAlert(imageBuffer) {
     });
     return axios.post(url, form, {
       headers: form.getHeaders(),
+      httpsAgent: telegramAgent,
       timeout: 30000,
       maxBodyLength: Infinity,
     });
