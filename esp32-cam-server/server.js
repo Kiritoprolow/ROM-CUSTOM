@@ -8,6 +8,15 @@ const axios = require("axios");
 const FormData = require("form-data");
 const sharp = require("sharp");
 
+// TEST MẠNG - XOÁ SAU KHI DEBUG XONG
+axios.get('https://api.telegram.org', { timeout: 10000 })
+  .then(r => console.log('[NETWORK TEST] Telegram OK, status:', r.status))
+  .catch(e => console.log('[NETWORK TEST] Telegram FAILED:', e.code || e.message));
+
+axios.get('https://huggingface.co', { timeout: 10000 })
+  .then(r => console.log('[NETWORK TEST] HuggingFace OK, status:', r.status))
+  .catch(e => console.log('[NETWORK TEST] HuggingFace FAILED:', e.code || e.message));
+
 const PORT = parseInt(process.env.PORT || "7860", 10);
 const API_KEY = process.env.API_KEY || "";
 const GRADIO_SPACE =
