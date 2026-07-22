@@ -2,11 +2,16 @@
 
 const http = require("http");
 const https = require("https");
+const fs = require("fs");
+const path = require("path");
+const { spawn } = require("child_process");
 const express = require("express");
 const { WebSocketServer } = require("ws");
 const axios = require("axios");
 const FormData = require("form-data");
 const sharp = require("sharp");
+
+sharp.concurrency(1); // keep image work off the ffmpeg core and predictable
 
 // TEST MẠNG - XOÁ SAU KHI DEBUG XONG
 axios.get('https://api.telegram.org', { timeout: 10000 })
@@ -16,6 +21,10 @@ axios.get('https://api.telegram.org', { timeout: 10000 })
 axios.get('https://huggingface.co', { timeout: 10000 })
   .then(r => console.log('[NETWORK TEST] HuggingFace OK, status:', r.status))
   .catch(e => console.log('[NETWORK TEST] HuggingFace FAILED:', e.code || e.message));
+
+axios.get('https://pixeldrain.com', { timeout: 10000 })
+  .then(r => console.log('[NETWORK TEST] PixelDrain OK, status:', r.status))
+  .catch(e => console.log('[NETWORK TEST] PixelDrain FAILED:', e.code || e.message));
 
 const PORT = parseInt(process.env.PORT || "7860", 10);
 const API_KEY = process.env.API_KEY || "";
@@ -29,9 +38,24 @@ const TELEGRAM_API_BASE = (
   process.env.TELEGRAM_API_BASE || "https://api.telegram.org"
 ).replace(/\/+$/, "");
 
+const PIXELDRAIN_API_KEY = (process.env.PIXELDRAIN_API_KEY || "").trim();
+// PixelDrain API base; point to a Cloudflare Worker relay
+// (cloudflare-worker/pixeldrain-relay.js) if the host blocks pixeldrain.com
+const PIXELDRAIN_API_BASE = (
+  process.env.PIXELDRAIN_API_BASE || "https://pixeldrain.com"
+).replace(/\/+$/, "");
+
 const MOTION_THRESHOLD = 0.15; // 15% pixel variance
 const MOTION_SAMPLE_STEP = 50; // sparse byte sampling step
 const ALERT_COOLDOWN_MS = 60 * 1000; // 60s between Telegram alerts
+
+const FRAME_RATE = 10; // ESP32 sends ~10 FPS
+const RECORD_CHUNK_FRAMES = parseInt(
+  process.env.RECORD_CHUNK_FRAMES || "18000", // ~30 minutes @ 10fps
+  10
+);
+const FRAMES_DIR = "/tmp/camera_frames";
+const VIDEO_DIR = "/tmp/camera_video";
 
 // Reuse connections and force IPv4 (containers often lack IPv6 egress,
 // which makes Node hang on api.telegram.org while curl works)
@@ -43,6 +67,9 @@ let prevFrame = null; // previous frame for motion comparison
 let lastAlertAt = 0; // timestamp of last Telegram alert
 let aiBusy = false; // prevent overlapping AI pipelines
 const streamClients = new Set(); // active MJPEG /stream responses
+let recordCount = 0; // frames written in the current chunk
+let recordBusy = false; // a frame is being annotated/written
+let videoJobBusy = false; // an encode/upload job is running
 
 const app = express();
 
@@ -184,6 +211,9 @@ wss.on("connection", (ws) => {
     const frame = Buffer.isBuffer(data) ? data : Buffer.from(data);
     latestFrame = frame;
     broadcastFrame(frame);
+    recordFrame(frame).catch((err) =>
+      console.error("[REC] Frame error:", err.message)
+    );
     if (detectMotion(frame)) {
       runAiPipeline(frame).catch((err) =>
         console.error("[AI] Pipeline error:", err.message)
@@ -311,15 +341,133 @@ async function drawBoundingBoxes(imageBuffer, boxes) {
     .toBuffer();
 }
 
+// ---- Video recording -> ffmpeg -> PixelDrain -> Telegram ----
+function vnTimestamp() {
+  return new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+}
+
+// Full date+time overlay (bottom-left) burned into frames and alert photos
+async function annotateTimestamp(imageBuffer) {
+  const meta = await sharp(imageBuffer).metadata();
+  const imgW = meta.width || 640;
+  const imgH = meta.height || 480;
+  const svg = Buffer.from(
+    `<svg width="${imgW}" height="${imgH}" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4" y="${imgH - 26}" width="250" height="22" fill="black" fill-opacity="0.55" rx="3"/>
+  <text x="10" y="${imgH - 10}" font-size="14" font-family="Arial" fill="white">${vnTimestamp()}</text>
+</svg>`
+  );
+  return sharp(imageBuffer)
+    .composite([{ input: svg, top: 0, left: 0 }])
+    .jpeg()
+    .toBuffer();
+}
+
+async function recordFrame(frame) {
+  if (!PIXELDRAIN_API_KEY) return; // recording disabled without upload target
+  if (recordBusy) return; // drop frame rather than queue up CPU work
+  recordBusy = true;
+  try {
+    fs.mkdirSync(FRAMES_DIR, { recursive: true });
+    const stamped = await annotateTimestamp(frame);
+    const name = `frame_${String(recordCount).padStart(8, "0")}.jpg`;
+    await fs.promises.writeFile(path.join(FRAMES_DIR, name), stamped);
+    recordCount++;
+    if (recordCount >= RECORD_CHUNK_FRAMES) {
+      const frames = recordCount;
+      recordCount = 0;
+      finalizeVideoChunk(frames).catch((err) =>
+        console.error("[REC] Video job error:", err.message)
+      );
+    }
+  } finally {
+    recordBusy = false;
+  }
+}
+
+async function finalizeVideoChunk(frameTotal) {
+  if (videoJobBusy) return;
+  videoJobBusy = true;
+  const jobDir = `/tmp/camera_frames_job_${Date.now()}`;
+  const outPath = path.join(VIDEO_DIR, `camera_${Date.now()}.mp4`);
+  try {
+    fs.renameSync(FRAMES_DIR, jobDir); // recording continues into a fresh dir
+    fs.mkdirSync(VIDEO_DIR, { recursive: true });
+    console.log(`[REC] Encoding ${frameTotal} frames...`);
+    await runFfmpeg(path.join(jobDir, "frame_%08d.jpg"), outPath);
+    const link = await uploadToPixelDrain(outPath);
+    console.log(`[REC] Uploaded: ${link}`);
+    await sendTelegramMessage(
+      `📹 Video giám sát 30 phút (${vnTimestamp()}): ${link}`
+    );
+  } finally {
+    // Always clean /tmp, even on mid-job failure
+    fs.rmSync(jobDir, { recursive: true, force: true });
+    fs.rmSync(outPath, { force: true });
+    videoJobBusy = false;
+  }
+}
+
+function runFfmpeg(inputPattern, outputPath) {
+  return new Promise((resolve, reject) => {
+    console.time("[FFmpeg] Nén video");
+    const args = [
+      "-c", "1", // pin to core 1 - core 0 stays free for Node/AI/motion/stream
+      "cpulimit", "-l", "80", "--",
+      "ffmpeg", "-y",
+      "-threads", "1",
+      "-framerate", String(FRAME_RATE),
+      "-i", inputPattern,
+      "-c:v", "libx264",
+      "-preset", "ultrafast",
+      "-pix_fmt", "yuv420p",
+      outputPath,
+    ];
+    const proc = spawn("taskset", args);
+    let stderr = "";
+    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.on("close", (code) => {
+      console.timeEnd("[FFmpeg] Nén video");
+      if (code === 0) resolve();
+      else reject(new Error(`FFMPEG lỗi ${code}: ${stderr.slice(-400)}`));
+    });
+    proc.on("error", reject);
+  });
+}
+
+async function uploadToPixelDrain(filePath) {
+  const name = path.basename(filePath);
+  const res = await axios.put(
+    `${PIXELDRAIN_API_BASE}/api/file/${encodeURIComponent(name)}`,
+    fs.createReadStream(filePath),
+    {
+      auth: { username: "", password: PIXELDRAIN_API_KEY },
+      headers: { "Content-Type": "application/octet-stream" },
+      httpsAgent: telegramAgent,
+      timeout: 10 * 60 * 1000,
+      maxBodyLength: Infinity,
+    }
+  );
+  return `https://pixeldrain.com/u/${res.data.id}`;
+}
+
+async function sendTelegramMessage(text) {
+  if (!TELEGRAM_BOT_TOKEN || !CHAT_ID) return;
+  await axios.post(
+    `${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+    { chat_id: CHAT_ID, text },
+    { httpsAgent: telegramAgent, timeout: 30000 }
+  );
+}
+
 async function sendTelegramAlert(imageBuffer) {
   if (!TELEGRAM_BOT_TOKEN || !CHAT_ID) {
     console.warn("[TG] Missing TELEGRAM_BOT_TOKEN or CHAT_ID, skipping alert");
     return;
   }
-  const time = new Date().toLocaleString("vi-VN", {
-    timeZone: "Asia/Ho_Chi_Minh",
-  });
+  const time = vnTimestamp();
   const caption = `🚨 CẢNH BÁO KHẨN CẤP: Phát hiện trộm trong vườn sầu riêng lúc ${time}!`;
+  imageBuffer = await annotateTimestamp(imageBuffer);
   const url = `${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
 
   const attempt = async () => {

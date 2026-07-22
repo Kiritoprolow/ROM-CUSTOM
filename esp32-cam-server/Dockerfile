@@ -1,5 +1,7 @@
 FROM node:20-bullseye-slim
 
+RUN apt-get update && apt-get install -y ffmpeg cpulimit util-linux && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY package*.json ./
