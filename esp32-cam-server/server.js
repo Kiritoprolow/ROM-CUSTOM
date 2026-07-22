@@ -9,9 +9,8 @@ const sharp = require("sharp");
 
 const PORT = parseInt(process.env.PORT || "7860", 10);
 const API_KEY = process.env.API_KEY || "";
-const YOLO_API_URL =
-  process.env.YOLO_API_URL ||
-  "https://kakaytbrr-vuon-sau-rieng-face-detect.hf.space/api/predict";
+const GRADIO_SPACE =
+  process.env.GRADIO_SPACE || "Kakaytbrr/vuon-sau-rieng-face-detect";
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.CHAT_ID || "";
 
@@ -150,7 +149,7 @@ function detectMotion(frame) {
 // ---- AI pipeline: enhance -> YOLO -> draw boxes -> Telegram ----
 async function runAiPipeline(frame) {
   if (aiBusy) return;
-  if (!YOLO_API_URL) return;
+  if (!GRADIO_SPACE) return;
   aiBusy = true;
   try {
     // Night-time enhancement before sending to AI
@@ -173,23 +172,36 @@ async function runAiPipeline(frame) {
   }
 }
 
+// @gradio/client is ESM-only; load via dynamic import and cache the connection
+let gradioClientPromise = null;
+function getGradioClient() {
+  if (!gradioClientPromise) {
+    gradioClientPromise = import("@gradio/client").then(({ Client }) =>
+      Client.connect(GRADIO_SPACE)
+    );
+    gradioClientPromise.catch(() => {
+      gradioClientPromise = null;
+    });
+  }
+  return gradioClientPromise;
+}
+
 async function callYolo(imageBuffer) {
-  const form = new FormData();
-  form.append("file", imageBuffer, {
-    filename: "frame.jpg",
-    contentType: "image/jpeg",
-  });
-  const res = await axios.post(YOLO_API_URL, form, {
-    headers: form.getHeaders(),
-    timeout: 15000,
-    maxBodyLength: Infinity,
-  });
-  // Gradio response: { data: [ { person_count, boxes: [{x1,y1,x2,y2,confidence}] } ] }
-  const payload = res.data && Array.isArray(res.data.data) ? res.data.data[0] : null;
-  if (!payload) return { personCount: 0, boxes: [] };
-  const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
-  const personCount = Number(payload.person_count) || boxes.length;
-  return { personCount, boxes };
+  try {
+    const app = await getGradioClient();
+    const imageBlob = new Blob([imageBuffer], { type: "image/jpeg" });
+    const res = await app.predict("/detect_person", { image: imageBlob });
+
+    // Gradio response: { data: [ { person_count, boxes: [{x1,y1,x2,y2,confidence}] } ] }
+    const payload = res.data && Array.isArray(res.data) ? res.data[0] : null;
+    if (!payload) return { personCount: 0, boxes: [] };
+    const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
+    const personCount = Number(payload.person_count) || boxes.length;
+    return { personCount, boxes };
+  } catch (err) {
+    console.error("[AI Call Error]", err.message);
+    return { personCount: 0, boxes: [] };
+  }
 }
 
 async function drawBoundingBoxes(imageBuffer, boxes) {
