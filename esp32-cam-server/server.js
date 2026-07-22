@@ -23,6 +23,11 @@ const GRADIO_SPACE =
   process.env.GRADIO_SPACE || "Kakaytbrr/vuon-sau-rieng-face-detect";
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const CHAT_ID = (process.env.CHAT_ID || "").trim();
+// Telegram API base URL; point to a Cloudflare Worker relay
+// (see cloudflare-worker/telegram-relay.js) when the host blocks api.telegram.org
+const TELEGRAM_API_BASE = (
+  process.env.TELEGRAM_API_BASE || "https://api.telegram.org"
+).replace(/\/+$/, "");
 
 const MOTION_THRESHOLD = 0.15; // 15% pixel variance
 const MOTION_SAMPLE_STEP = 50; // sparse byte sampling step
@@ -53,13 +58,42 @@ app.get("/", (req, res) => {
   body { margin:0; background:#0d1117; color:#e6edf3; font-family:Arial,sans-serif; text-align:center; }
   h1 { font-size:1.3rem; padding:12px 0 4px; }
   .status { font-size:.85rem; color:#8b949e; margin-bottom:10px; }
-  img { max-width:100%; width:640px; border:2px solid #30363d; border-radius:8px; background:#161b22; }
+  .badge { padding:2px 10px; border-radius:10px; font-weight:bold; }
+  .badge.ok { background:#1f6feb; color:#fff; }
+  .badge.warn { background:#b62324; color:#fff; }
+  canvas { max-width:100%; width:640px; border:2px solid #30363d; border-radius:8px; background:#161b22; }
 </style>
 </head>
 <body>
 <h1>📷 ESP32-CAM: Giám Sát Trực Tiếp</h1>
-<div class="status">MJPEG stream trực tiếp · Lọc chuyển động · Cảnh báo YOLO qua Telegram</div>
-<img src="/stream" alt="Đang chờ tín hiệu từ ESP32-CAM...">
+<div class="status">Live qua WebSocket · Lọc chuyển động · Cảnh báo YOLO qua Telegram · <span id="status" class="badge warn">ĐANG KẾT NỐI...</span></div>
+<canvas id="view" width="640" height="480"></canvas>
+<script>
+  const statusEl = document.getElementById('status');
+  const canvas = document.getElementById('view');
+  const ctx = canvas.getContext('2d');
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const ws = new WebSocket(proto + location.host + '/view');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => { statusEl.textContent = 'ĐANG HOẠT ĐỘNG'; statusEl.className = 'badge ok'; };
+    ws.onclose = () => {
+      statusEl.textContent = 'MẤT KẾT NỐI - ĐANG THỬ LẠI...';
+      statusEl.className = 'badge warn';
+      setTimeout(connect, 2000); // tự nối lại sau 2s
+    };
+    ws.onmessage = (event) => {
+      const blob = new Blob([event.data], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); URL.revokeObjectURL(url); };
+      img.src = url;
+    };
+  }
+  connect();
+</script>
 </body>
 </html>`);
 });
@@ -102,15 +136,27 @@ function broadcastFrame(frame) {
     }
     pushMjpegFrame(res, frame);
   }
+  for (const client of wssViewer.clients) {
+    if (client.readyState === client.OPEN && client.bufferedAmount < 1_000_000) {
+      client.send(frame);
+    }
+  }
 }
 
 const server = http.createServer(app);
 
-// ---- WebSocket: receive JPEG frames from ESP32-CAM ----
+// ---- WebSockets: /esp32stream (camera, API key) and /view (browser viewers) ----
 const wss = new WebSocketServer({ noServer: true });
+const wssViewer = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/view") {
+    wssViewer.handleUpgrade(req, socket, head, (ws) => {
+      wssViewer.emit("connection", ws, req);
+    });
+    return;
+  }
   if (url.pathname !== "/esp32stream") {
     socket.destroy();
     return;
@@ -124,6 +170,11 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
+});
+
+wssViewer.on("connection", (ws) => {
+  if (latestFrame) ws.send(latestFrame);
+  ws.on("error", () => {});
 });
 
 wss.on("connection", (ws) => {
@@ -269,7 +320,7 @@ async function sendTelegramAlert(imageBuffer) {
     timeZone: "Asia/Ho_Chi_Minh",
   });
   const caption = `🚨 CẢNH BÁO KHẨN CẤP: Phát hiện trộm trong vườn sầu riêng lúc ${time}!`;
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+  const url = `${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
 
   const attempt = async () => {
     const form = new FormData();
