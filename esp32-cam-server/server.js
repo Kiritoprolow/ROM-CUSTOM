@@ -11,8 +11,8 @@ const PORT = parseInt(process.env.PORT || "7860", 10);
 const API_KEY = process.env.API_KEY || "";
 const GRADIO_SPACE =
   process.env.GRADIO_SPACE || "Kakaytbrr/vuon-sau-rieng-face-detect";
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CHAT_ID = process.env.CHAT_ID || "";
+const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const CHAT_ID = (process.env.CHAT_ID || "").trim();
 
 const MOTION_THRESHOLD = 0.15; // 15% pixel variance
 const MOTION_SAMPLE_STEP = 50; // sparse byte sampling step
@@ -151,22 +151,32 @@ async function runAiPipeline(frame) {
   if (aiBusy) return;
   if (!GRADIO_SPACE) return;
   aiBusy = true;
+  const t0 = Date.now();
+  const step = (msg) => console.log(`[AI] +${Date.now() - t0}ms ${msg}`);
   try {
+    step("pipeline start");
     // Night-time enhancement before sending to AI
     const enhanced = await sharp(frame)
       .modulate({ brightness: 1.2, saturation: 1.1 })
       .jpeg()
       .toBuffer();
+    step(`enhance done (${enhanced.length} bytes)`);
 
     const result = await callYolo(enhanced);
+    step(`yolo done (persons=${result.personCount}, boxes=${result.boxes.length})`);
     if (result.personCount <= 0 || result.boxes.length === 0) return;
 
     const now = Date.now();
-    if (now - lastAlertAt < ALERT_COOLDOWN_MS) return;
+    if (now - lastAlertAt < ALERT_COOLDOWN_MS) {
+      step("cooldown active, skipping alert");
+      return;
+    }
     lastAlertAt = now;
 
     const annotated = await drawBoundingBoxes(enhanced, result.boxes);
+    step(`draw done (${annotated.length} bytes)`);
     await sendTelegramAlert(annotated);
+    step("telegram done");
   } finally {
     aiBusy = false;
   }
@@ -244,21 +254,30 @@ async function sendTelegramAlert(imageBuffer) {
   const time = new Date().toLocaleString("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh",
   });
-  const form = new FormData();
-  form.append("chat_id", CHAT_ID);
-  form.append(
-    "caption",
-    `🚨 CẢNH BÁO KHẨN CẤP: Phát hiện trộm trong vườn sầu riêng lúc ${time}!`
-  );
-  form.append("photo", imageBuffer, {
-    filename: "alert.jpg",
-    contentType: "image/jpeg",
-  });
-  await axios.post(
-    `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`,
-    form,
-    { headers: form.getHeaders(), timeout: 15000, maxBodyLength: Infinity }
-  );
+  const caption = `🚨 CẢNH BÁO KHẨN CẤP: Phát hiện trộm trong vườn sầu riêng lúc ${time}!`;
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`;
+
+  const attempt = async () => {
+    const form = new FormData();
+    form.append("chat_id", CHAT_ID);
+    form.append("caption", caption);
+    form.append("photo", imageBuffer, {
+      filename: "alert.jpg",
+      contentType: "image/jpeg",
+    });
+    return axios.post(url, form, {
+      headers: form.getHeaders(),
+      timeout: 30000,
+      maxBodyLength: Infinity,
+    });
+  };
+
+  try {
+    await attempt();
+  } catch (err) {
+    console.warn(`[TG] sendPhoto failed (${err.message}), retrying once...`);
+    await attempt();
+  }
   console.log("[TG] Alert sent");
 }
 
