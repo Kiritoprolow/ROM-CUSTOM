@@ -45,8 +45,8 @@ const PIXELDRAIN_API_BASE = (
   process.env.PIXELDRAIN_API_BASE || "https://pixeldrain.com"
 ).replace(/\/+$/, "");
 
-const MOTION_THRESHOLD = 0.15; // 15% pixel variance
-const MOTION_SAMPLE_STEP = 50; // sparse byte sampling step
+const MOTION_THRESHOLD = 0.08; // 8% of decoded pixels changed
+const MOTION_PIXEL_DELTA = 25; // per-pixel grayscale delta to count as changed
 const ALERT_COOLDOWN_MS = 60 * 1000; // 60s between Telegram alerts
 
 const FRAME_RATE = 10; // ESP32 sends ~10 FPS
@@ -63,7 +63,8 @@ const telegramAgent = new https.Agent({ keepAlive: true, family: 4 });
 
 // ---- RAM-only state ----
 let latestFrame = null; // latest JPEG buffer for the live stream
-let prevFrame = null; // previous frame for motion comparison
+let prevPixels = null; // previous decoded 32x24 grayscale pixels
+let motionBusy = false; // a frame is being decoded for motion
 let lastAlertAt = 0; // timestamp of last Telegram alert
 let aiBusy = false; // prevent overlapping AI pipelines
 const streamClients = new Set(); // active MJPEG /stream responses
@@ -214,31 +215,50 @@ wss.on("connection", (ws) => {
     recordFrame(frame).catch((err) =>
       console.error("[REC] Frame error:", err.message)
     );
-    if (detectMotion(frame)) {
-      runAiPipeline(frame).catch((err) =>
-        console.error("[AI] Pipeline error:", err.message)
-      );
-    }
+    detectMotion(frame)
+      .then((moved) => {
+        if (moved) {
+          runAiPipeline(frame).catch((err) =>
+            console.error("[AI] Pipeline error:", err.message)
+          );
+        }
+      })
+      .catch((err) => console.error("[Motion] Error:", err.message));
   });
   ws.on("close", () => console.log("[WS] ESP32-CAM disconnected"));
   ws.on("error", (err) => console.error("[WS] Error:", err.message));
 });
 
-// ---- Motion detection: sparse byte sampling ----
-function detectMotion(frame) {
-  const prev = prevFrame;
-  prevFrame = frame;
-  if (!prev) return false;
+// ---- Motion detection: decoded downscaled grayscale pixel diff ----
+// Comparing compressed JPEG bytes is unreliable (entropy coding masks real
+// movement and amplifies static-scene noise); compare actual pixels instead.
+async function detectMotion(frame) {
+  if (motionBusy) return false; // drop frame rather than queue decode work
+  motionBusy = true;
+  try {
+    const { data } = await sharp(frame)
+      .resize(32, 24) // tiny thumbnail: cheap to decode, reflects global change
+      .greyscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
 
-  const len = Math.min(prev.length, frame.length);
-  let samples = 0;
-  let changed = 0;
-  for (let i = 0; i < len; i += MOTION_SAMPLE_STEP) {
-    samples++;
-    if (Math.abs(prev[i] - frame[i]) > 25) changed++;
+    if (!prevPixels || prevPixels.length !== data.length) {
+      prevPixels = data;
+      return false;
+    }
+
+    let diff = 0;
+    for (let i = 0; i < data.length; i++) {
+      if (Math.abs(data[i] - prevPixels[i]) > MOTION_PIXEL_DELTA) diff++;
+    }
+    prevPixels = data;
+    return diff > data.length * MOTION_THRESHOLD;
+  } catch (e) {
+    console.log("[Motion] Lỗi decode ảnh:", e.message);
+    return false;
+  } finally {
+    motionBusy = false;
   }
-  if (samples === 0) return false;
-  return changed / samples > MOTION_THRESHOLD;
 }
 
 // ---- AI pipeline: enhance -> YOLO -> draw boxes -> Telegram ----
