@@ -36,7 +36,7 @@ const PIXELDRAIN_RELAY_KEY = (process.env.PIXELDRAIN_RELAY_KEY || "").trim();
 
 const MOTION_THRESHOLD = 0.08; // 8% of decoded pixels changed
 const MOTION_PIXEL_DELTA = 25; // per-pixel grayscale delta to count as changed
-const ALERT_COOLDOWN_MS = 60 * 1000; // 60s between Telegram alerts
+const ALERT_COOLDOWN_MS = 10 * 1000; // 10s between Telegram alerts
 
 const FRAME_RATE = 10; // ESP32 sends ~10 FPS
 const RECORD_CHUNK_FRAMES = parseInt(
