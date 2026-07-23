@@ -13,19 +13,6 @@ const sharp = require("sharp");
 
 sharp.concurrency(1); // keep image work off the ffmpeg core and predictable
 
-// TEST MẠNG - XOÁ SAU KHI DEBUG XONG
-axios.get('https://api.telegram.org', { timeout: 10000 })
-  .then(r => console.log('[NETWORK TEST] Telegram OK, status:', r.status))
-  .catch(e => console.log('[NETWORK TEST] Telegram FAILED:', e.code || e.message));
-
-axios.get('https://huggingface.co', { timeout: 10000 })
-  .then(r => console.log('[NETWORK TEST] HuggingFace OK, status:', r.status))
-  .catch(e => console.log('[NETWORK TEST] HuggingFace FAILED:', e.code || e.message));
-
-axios.get('https://pixeldrain.com', { timeout: 10000 })
-  .then(r => console.log('[NETWORK TEST] PixelDrain OK, status:', r.status))
-  .catch(e => console.log('[NETWORK TEST] PixelDrain FAILED:', e.code || e.message));
-
 const PORT = parseInt(process.env.PORT || "7860", 10);
 const API_KEY = process.env.API_KEY || "";
 const GRADIO_SPACE =
