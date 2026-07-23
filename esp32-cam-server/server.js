@@ -37,6 +37,7 @@ const CHAT_ID = (process.env.CHAT_ID || "").trim();
 const TELEGRAM_API_BASE = (
   process.env.TELEGRAM_API_BASE || "https://api.telegram.org"
 ).replace(/\/+$/, "");
+const RELAY_KEY = (process.env.RELAY_KEY || "").trim();
 
 const PIXELDRAIN_API_KEY = (process.env.PIXELDRAIN_API_KEY || "").trim();
 // PixelDrain API base; point to a Cloudflare Worker relay
@@ -44,6 +45,7 @@ const PIXELDRAIN_API_KEY = (process.env.PIXELDRAIN_API_KEY || "").trim();
 const PIXELDRAIN_API_BASE = (
   process.env.PIXELDRAIN_API_BASE || "https://pixeldrain.com"
 ).replace(/\/+$/, "");
+const PIXELDRAIN_RELAY_KEY = (process.env.PIXELDRAIN_RELAY_KEY || "").trim();
 
 const MOTION_THRESHOLD = 0.08; // 8% of decoded pixels changed
 const MOTION_PIXEL_DELTA = 25; // per-pixel grayscale delta to count as changed
@@ -462,7 +464,10 @@ async function uploadToPixelDrain(filePath) {
     fs.createReadStream(filePath),
     {
       auth: { username: "", password: PIXELDRAIN_API_KEY },
-      headers: { "Content-Type": "application/octet-stream" },
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...(PIXELDRAIN_RELAY_KEY ? { "X-Relay-Key": PIXELDRAIN_RELAY_KEY } : {}),
+      },
       httpsAgent: telegramAgent,
       timeout: 10 * 60 * 1000,
       maxBodyLength: Infinity,
@@ -476,7 +481,11 @@ async function sendTelegramMessage(text) {
   await axios.post(
     `${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
     { chat_id: CHAT_ID, text },
-    { httpsAgent: telegramAgent, timeout: 30000 }
+    {
+      headers: RELAY_KEY ? { "X-Relay-Key": RELAY_KEY } : {},
+      httpsAgent: telegramAgent,
+      timeout: 30000,
+    }
   );
 }
 
@@ -499,7 +508,10 @@ async function sendTelegramAlert(imageBuffer) {
       contentType: "image/jpeg",
     });
     return axios.post(url, form, {
-      headers: form.getHeaders(),
+      headers: {
+        ...form.getHeaders(),
+        ...(RELAY_KEY ? { "X-Relay-Key": RELAY_KEY } : {}),
+      },
       httpsAgent: telegramAgent,
       timeout: 30000,
       maxBodyLength: Infinity,
